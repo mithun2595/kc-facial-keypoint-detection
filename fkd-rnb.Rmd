@@ -3,14 +3,79 @@ title: "kc-facial-keypoint-detection"
 output: html_notebook
 ---
 
-This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
-
-Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Cmd+Shift+Enter*. 
-
+Create variables to store the path to the dataset.
 ```{r}
-
+data.dir   <- '~/kc-datasets/kc-fkd-dataset/'
+train.file <- paste0(data.dir, 'training.csv')
+test.file  <- paste0(data.dir, 'test.csv')
 ```
 
-Add a new chunk by clicking the *Insert Chunk* button on the toolbar or by pressing *Cmd+Option+I*.
+Read the csv.
+```{r}
+d.train <- read.csv(train.file, stringsAsFactors=F)
+```
 
-When you save the notebook, an HTML file containing the code and output will be saved alongside it (click the *Preview* button or press *Cmd+Shift+K* to preview the HTML file).
+R automatically guesses the datatype of the columns. But anyways let's do a basic sanity check.
+```{r}
+str(d.train)
+```
+
+As we can see the columns have been detected as expected. the last row denoting the last column is the one with image index. As an alternative we can also use head command to take a peek at a few rows of out data
+```{r}
+head(d.train)
+```
+
+If you look at the last column of this, you can notice that it's the RGB value of the image pixel by pixel. Let's trim this column off after saving it elsewhere.
+```{r}
+im.train      <- d.train$Image
+d.train$Image <- NULL
+head(d.train)
+```
+
+We have 30 columns denoting the (X,Y) coordinates of 15 facial keypoints mapped against each element in im.train. Now im.train is an array of strings denoting RGB values for all images in the dataset. Let's see what the type of each row is.
+```{r}
+im.train[1]
+print(typeof(im.train[1]))
+```
+
+We can see it's a string. Now let's process it into a vector of integers.
+```{r}
+as.integer(unlist(strsplit(im.train[1], " ")))
+```
+
+strsplit splits the long string seperated by spaces (" ") and unlist combines them into a vector of strings. as.integer converts it to vector of integers. That works well, but we need to do it for all images, and not only the first one. We could iterate through each record in im.train and apply the string to integers conversion above. However, sequentially processing this conversion can take some time. We can therefore utilize a multi core approach using the doMC library (linux and osx only - if you are working on windows please check this post for alternatives).
+
+```{r}
+install.packages('doMC')
+```
+```{r}
+library(doMC)
+registerDoMC()
+```
+
+Now we can implement the string to integer vector conversion parallely.
+```{r}
+im.train <- foreach(im = im.train, .combine=rbind) %dopar% {
+    as.integer(unlist(strsplit(im, " ")))
+}
+```
+
+The foreach loop will evaluate the inner command for each row in im.train, and combine the results with rbind (combine by rows). %dopar% instructs R to do all evaluations in parallel.im.train is now a matrix with 7049 rows (one for each image) and 9216 columns (one for each pixel):
+```{r}
+str(im.train)
+```
+
+Let's do the same for test set as well. For test we only have to do the conversion of pixel string to integers, since we don't have the keypoint info.
+```{r}
+d.test  <- read.csv(test.file, stringsAsFactors=F)
+im.test <- foreach(im = d.test$Image, .combine=rbind) %dopar% {
+    as.integer(unlist(strsplit(im, " ")))
+}
+d.test$Image <- NULL
+str(im.test)
+```
+
+We will go ahead and save the data curated so far in a R data file so that we can load and use it anytime later.
+```{r}
+save(d.train, im.train, d.test, im.test, file='kc-fkd-data.Rd')
+```
